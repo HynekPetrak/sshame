@@ -24,6 +24,8 @@ from sqlalchemy.sql import func, select, case
 from sqlalchemy import create_engine
 from sshame.db import Host, Base, Key, Credential, Command, CommandiAlias
 
+version = "0.5"
+
 try:
     from colorama import Back
     BACK_RESET = Back.RESET
@@ -55,7 +57,7 @@ def configure_logging():
     # logging.getLogger("asyncio").setLevel(logging.DEBUG)
     log.setLevel(logging.DEBUG)
     # create file handler which logs even debug messages
-    fh = logging.FileHandler(os.path.basename(__file__) + ".log")
+    fh = logging.FileHandler('sshame.log')
     fh.setLevel(logging.DEBUG)
     # create console handler with a higher log level
     ch = logging.StreamHandler()
@@ -89,7 +91,7 @@ def progbar(curr, total, full_progbar=20):
 
 
 class Shell(cmd2.Cmd):
-    intro = 'Welcome to the sshame. Type help or ? to list commands.\n'
+    intro = f'Welcome to the sshame {version}\nType help or ? to list commands.\n'
     prompt = '(sshame) '
     file = None
     db = None
@@ -98,6 +100,7 @@ class Shell(cmd2.Cmd):
     timeout = 60.0
 
     def __init__(self):
+        log.info(f"Starting shame {version}")
         histfile = os.path.expanduser('~/.sshame_history')
         super().__init__(persistent_history_file=histfile)
         self.settable.update({'timeout': 'Network timeout in seconds'})
@@ -116,6 +119,8 @@ class Shell(cmd2.Cmd):
         '-l', '--list', action='store_true', help='List hosts')
     hosts_item_group.add_argument(
         '-d', '--disable', type=str, nargs='+', help='Disable hosts')
+    hosts_item_group.add_argument(
+        '-e', '--enable', type=str, nargs='+', help='Enable hosts')
     hosts_parser.add_argument('-p', '--port', type=int, nargs='*',
                               default=[22], help='TCP port numbers to be used')
 
@@ -176,13 +181,23 @@ class Shell(cmd2.Cmd):
                               Host.enabled, Host.dn, Host.created)
             self.print_table(q)
         if arg.disable:
-            dis = [ipaddress.ip_network(x, False) for x in arg.disable]
+            ips = [ipaddress.ip_network(x, False) for x in arg.disable]
             hosts = self.db.query(Host)
             for h in hosts:
                 a = ipaddress.ip_address(h.address)
-                for n in dis:
+                for n in ips:
                     if (a in n):
                         h.enabled = False
+                        continue
+            self.db.commit()
+        if arg.enable:
+            ips = [ipaddress.ip_network(x, False) for x in arg.enable]
+            hosts = self.db.query(Host)
+            for h in hosts:
+                a = ipaddress.ip_address(h.address)
+                for n in ips:
+                    if (a in n):
+                        h.enabled = True
                         continue
             self.db.commit()
 
@@ -547,26 +562,27 @@ class Shell(cmd2.Cmd):
         log.info(f"Preparing target jobs...")
         hosts_cnt = self.db.query(Host.address, Host.port).count()
         i = 0
-        for (host_address, host_port) in self.db.query(Host.address, Host.port).filter(Host.enabled == True):
-            for username in usernames:
-                if cmds:
-                    kq = self.db.query(Key.fingerprint, Key.private_key).filter(Key.fingerprint.in_(
-                        self.db.query(Credential.key_fingerprint).filter(
-                            Credential.host_address == host_address).filter(Credential.host_port == host_port)
-                        .filter(Credential.username == username).filter(Credential.valid == True)))
-                else:
+        if cmds:
+            kq = self.db.query(Credential.username, Host.address, Host.port, Key.fingerprint, Key.private_key
+                    ).join('host').join('key').filter(Credential.valid == True).order_by(Credential.host_address)
+            for x in kq:
+                jobs.append(self.exploit_single_target(username=x[0], host_address=x[1], host_port=x[2],
+                    keys={x[3]: x[4]}, cmds=cmds))
+        else:
+            for (host_address, host_port) in self.db.query(Host.address, Host.port).filter(Host.enabled == True):
+                for username in usernames:
                     kq = self.db.query(Key.fingerprint, Key.private_key).filter(~Key.fingerprint.in_(
                         self.db.query(Credential.key_fingerprint).filter(
                             Credential.host_address == host_address).filter(Credential.host_port == host_port)
                         .filter(Credential.username == username).filter(Credential.valid.in_([True, False]))))
-                keys = {x[0]: x[1] for x in kq}
-                if not keys:
-                    continue
-                #print(host_address, host_port, keys)
-                jobs.append(self.exploit_single_target(host_address, host_port,
-                                             username, dict(keys), cmds))
-            i += 1
-            progbar(i, hosts_cnt)
+
+                    keys = {x[0]: x[1] for x in kq}
+                    if not keys:
+                        continue
+                    jobs.append(self.exploit_single_target(host_address, host_port,
+                                                 username, dict(keys), cmds))
+                i += 1
+                progbar(i, hosts_cnt)
         if not jobs:
             log.info("Nothing to do")
             return
@@ -644,7 +660,8 @@ E.g. exploit -c "tar -cf - .ssh /etc/passwd /etc/ldap.conf /etc/shadow /home/*/.
             self.print_table(q)
         if arg.results:
             q = self.db.query(Command.guid, Command.host_address, Command.host_port, Command.username, Command.cmd,
-                              Command.exit_status, func.coalesce(Command.stdout, Command.stderr, Command.exception).label('output'))
+                              Command.exit_status, func.coalesce(Command.stdout, Command.stderr, Command.exception).label('output'),
+                              Command.updated)
             self.print_table(q)
         if arg.save:
             r = self.db.query(func.coalesce(Command.stdout, Command.stderr, Command.exception).label(

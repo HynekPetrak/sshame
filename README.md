@@ -1,11 +1,11 @@
-# sshame
-Interactive tool to brute force ssh public key authentication. Primarily intended for pentration testers. Sshame can execute commends on remote hosts.
+# sshame - SSH Public Key brute force tool
+Interactive tool to brute force ssh public key authentication. Primarily intended for pentration testers. Sshame can execute commands on remote hosts.
 
 ## Version history ##
 
-### 0.5 - 2019-08-25 ###
+### sshame 0.5 - 2019-08-25 ###
 
-Initial version
+Initial release
 
 ## Installing ##
 
@@ -21,14 +21,14 @@ Then in order to install run:
 In case you want to contribute instead of install run:
 
     sudo python3 setup.py develop
-    
-## Run ##
+
+## Basic usage ##
 
 sshame is interactive, based on https://github.com/python-cmd2/cmd2
 
     # sshame
-    (sshame) 
-    
+    (sshame)
+
 Type help to get a list of commands:
     (sshame) help
 
@@ -55,15 +55,15 @@ In the sshame shell run `hosts -a list-of-ip-ranges-or-hosts [-p port]`:
     2019-08-25 19:22:15,633 sshame [I] 'Adding host (port open): 10.0.0.2 22'
     2019-08-25 19:22:15,683 sshame [I] 'Adding host (port open): 10.0.0.1 22'
     2019-08-25 19:22:15,686 sshame [I] 'Adding host (port open): 10.0.0.6 22'
-    
+
  sshame will scan the given hosts with scapy and add those, which have the port open.
- 
+
  To verify added hosts with TCP port open run `hosts -l`
- 
- ### Load ssha keys ###
- 
+
+### Load ssh keys ###
+
  Load private keys with `keys -a glob_path [-p list-of-passwords]`
- 
+
     (sshame) keys -a test/**/*key
     2019-08-25 19:30:40,613 sshame [I] "Adding ssh keys from: ['test/**/*key']"
     2019-08-25 19:30:40,614 sshame [I] "Discovered 4 files in 'test/**/*key'."
@@ -96,4 +96,34 @@ List matching keys with `creds -l`:
 
 ### Run commands on remote hosts ###
 
-To run commands on remote hosts use `exploit -c whoami`
+To run commands on remote hosts use `exploit -c command`, e.g.:
+
+    (sshame) exploit -c whoami
+    2019-08-25 23:28:22,757 sshame [I] 'Preparing target jobs...'
+    2019-08-25 23:28:22,763 sshame [I] 'Executing commands - 2 jobs scheduled'
+    Completed: [####################] [100.00%]
+    2019-08-25 23:28:23,993 sshame [I] '---------------------------------------------------------------------------'
+
+### Show command results ###
+
+With `commands -r` diplay the results:
+
+    (sshame) commands -r
+    Entries: 2
+    
+    | guid                                 | host_address   |   host_port | username   | cmd                  |   exit_status | output          | updated             |
+    |--------------------------------------+----------------+-------------+------------+----------------------+---------------+-----------------+---------------------|
+    | 434f163a-24b5-4775-a3c1-6ea41745b18d | 10.0.0.2       |          22 | root       | whoami               |             0 | root            | 2019-08-25 21:28:23 |
+    | 305e3f5d-bf4d-4024-981a-59b2dddebbcd | 10.0.0.1       |          22 | admin      | whoami               |             0 | admin           | 2019-08-25 21:28:23 |
+
+### Session management ###
+
+You may want to split wokloads into sessions. Use `session name` to switch between sessions. Default session is 
+called 'default'.
+
+Each session has its data stored in a separate sqlite db in the current directory named after the session 
+name, e.g. `default.db`
+
+    (sshame) session test
+    2019-08-25 23:38:38,283 sshame [I] 'Openning session: sqlite:///test.db'
+
