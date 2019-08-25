@@ -96,4 +96,4 @@ List matching keys with `creds -l`:
 
 ### Run commands on remote hosts ###
 
-To run commands on remote hosts run `exploit -c whoami`
+To run commands on remote hosts use `exploit -c whoami`
