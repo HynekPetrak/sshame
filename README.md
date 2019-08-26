@@ -9,6 +9,8 @@ Initial release
 
 ## Installing ##
 
+### Installing from Github ###
+
 Clone the source from Github:
 
     git clone https://github.com/HynekPetrak/sshame.git
@@ -21,6 +23,12 @@ Then in order to install run:
 In case you want to contribute instead of install run:
 
     sudo python3 setup.py develop
+
+### Installaling via PyPI ###
+
+`pip3` will install the latest release.
+
+    pip3 install shame
 
 ## Basic usage ##
 

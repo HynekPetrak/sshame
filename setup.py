@@ -15,8 +15,9 @@ setup(
     name=PROJECT,
     version=VERSION,
 
-    description='SSH public key brute forcer',
+    description='SSH public key brute force tool',
     long_description=long_description,
+    long_description_content_type="text/markdown",
 
     author='Hynek Petrak',
     author_email='hynek.petrak@gmail.com',
@@ -26,9 +27,7 @@ setup(
 
     classifiers=['Development Status :: 4 - Beta',
                  'License :: OSI Approved :: MIT License',
-                 'Programming Language :: Python',
                  'Programming Language :: Python :: 3 :: Only',
-                 'Programming Language :: Python :: 3.6',
                  'Intended Audience :: Other Audience',
                  'Environment :: Console',
                  'Operating System :: OS Independent',
