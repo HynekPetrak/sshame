@@ -33,6 +33,7 @@ sshame is interactive, based on https://github.com/python-cmd2/cmd2
     (sshame)
 
 Type help to get a list of commands:
+    
     (sshame) help
 
     Documented commands (type help <topic>):
