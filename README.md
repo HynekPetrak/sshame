@@ -1,12 +1,6 @@
 # sshame - Perfect tool to brute force SSH public-key authentication
 Interactive tool to brute force ssh public key authentication. Primarily intended for pentration testers. Sshame can execute commands on remote hosts.
 
-## Version history ##
-
-### sshame 0.5 - 2019-08-25 ###
-
-Initial release
-
 ## Installing ##
 
 ### Installing from Github ###
@@ -134,3 +128,9 @@ name, e.g. `default.db`
 
     (sshame) session test
     2019-08-25 23:38:38,283 sshame [I] 'Openning session: sqlite:///test.db'
+
+## Version history ##
+
+### sshame 0.5 - 2019-08-25 ###
+
+Initial release
