@@ -1,3 +1,4 @@
+![sshame logo](sshame.png)
 # sshame - Perfect tool to brute force SSH public-key authentication
 Interactive tool to brute force ssh public key authentication. Primarily intended for pentration testers. Sshame can execute commands on remote hosts.
 
