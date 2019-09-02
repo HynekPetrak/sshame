@@ -25,7 +25,7 @@ from sqlalchemy.sql import func, select, case
 from sqlalchemy import create_engine
 from sshame.db import Host, Base, Key, Credential, Command, CommandiAlias
 
-version = "0.5"
+version = "0.6-rc"
 
 try:
     from colorama import Back
@@ -92,7 +92,7 @@ def progbar(curr, total, full_progbar=20):
 
 
 class Shell(cmd2.Cmd):
-    intro = f'Welcome to the sshame {version}\nType help or ? to list commands.\n'
+    intro = f'Type help or ? to list commands.\n'
     prompt = '(sshame) '
     file = None
     db = None
@@ -101,7 +101,7 @@ class Shell(cmd2.Cmd):
     timeout = 60.0
 
     def __init__(self):
-        log.info(f"Starting shame {version}")
+        log.info(f"Starting ==== shame {version} ====")
         histfile = os.path.expanduser('~/.sshame_history')
         super().__init__(persistent_history_file=histfile)
         self.settable.update({'timeout': 'Network timeout in seconds'})
@@ -425,19 +425,27 @@ class Shell(cmd2.Cmd):
              .filter(vk.c.fingerprint.notin_(tk))
              .order_by(vk.c.value))
 
-        return OrderedDict((x[0], x[1]) for x in q)
+        return OrderedDict((x.fingerprint, x.private_key) for x in q)
 
-    def get_valid_credentials(self, host, port, username):
+    def get_valid_credentials(self, host=None, port=None, usernames=None):
         """Returns keys that can logon to username@host:port"""
 
-        q = (self.db.query(Key.fingerprint, Key.private_key)
+        q = (self.db.query(Key.fingerprint, Key.private_key, Credential.host_address,
+             Credential.host_port, Credential.username)
+             .distinct()
              .outerjoin(Credential, Key.fingerprint == Credential.key_fingerprint)
-             .filter(Credential.host_address == host)
-             .filter(Credential.host_port == port)
-             .filter(Credential.username == username)
              .filter(Credential.valid == True)
-             .group_by(Key.fingerprint))
-        return {(x[0], x[1]) for x in q}
+             #.group_by(Key.fingerprint, Credential.host_address,
+             #Credential.host_port, Credential.username)
+             )
+        if host:
+            q.filter(Credential.host_address == host)
+        if port:
+            q.filter(Credential.host_port == port)
+        if usernames:
+            q.filter(Credential.username.in_(usernames))
+
+        return q
 
     def get_valued_keys(self):
         return (self.db.query(Key.fingerprint.label('fingerprint'),
@@ -606,26 +614,20 @@ class Shell(cmd2.Cmd):
         hosts_cnt = self.db.query(Host.address, Host.port).count()
         i = 0
         if cmds:
-            kq = self.db.query(Credential.username, Host.address, Host.port, Key.fingerprint, Key.private_key
-                               ).join('host').join('key').filter(Credential.valid == True).order_by(Credential.host_address)
-            for x in kq:
-                jobs.append(self.exploit_single_target(username=x[0], host_address=x[1], host_port=x[2],
-                                                       keys={x[3]: x[4]}, cmds=cmds))
+            keys = self.get_valid_credentials()
+            for x in keys:
+                jobs.append(self.exploit_single_target(username=x.username,
+                    host_address=x.host_address, host_port=x.host_port,
+                    keys={x.fingerprint: x.private_key}, cmds=cmds))
         else:
             for (host, port) in self.db.query(
                     Host.address, Host.port).filter(Host.enabled == True):
                 for username in usernames:
-                    # kq=self.db.query(Key.fingerprint, Key.private_key).filter(~Key.fingerprint.in_(
-                    #    self.db.query(Credential.key_fingerprint).filter(
-                    #        Credential.host_address == host_address).filter(Credential.host_port == host_port)
-                    #    .filter(Credential.username == username).filter(Credential.valid.in_([True, False]))))
-
-                    #keys={x[0]: x[1] for x in kq}
                     keys = self.get_keys_to_test(host, port, username)
                     if not keys:
                         continue
                     jobs.append(self.exploit_single_target(host, port,
-                                                           username, keys, cmds))
+                       username, keys, cmds))
                 i += 1
                 progbar(i, hosts_cnt)
         if not jobs:
