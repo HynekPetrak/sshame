@@ -23,7 +23,7 @@ class Host(Base):
     enabled = Column(Boolean, default=True)
     #created = Column(DateTime, default=datetime.datetime.utcnow)
     created = Column(DateTime(timezone=True), server_default=func.now())
-    updated = Column(DateTime(timezone=True), onupdate=func.now())
+    updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     keys = relationship("Credential", back_populates="host")
     commands = relationship("Command", back_populates="host")
 
@@ -47,7 +47,7 @@ class Credential(Base):
     key_fingerprint = Column(Integer, ForeignKey('keys.fingerprint'), primary_key=True)
     username = Column(String(50), primary_key=True)
     valid = Column(Boolean)
-    updated = Column(DateTime(timezone=True), onupdate=func.now())
+    updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     host = relationship("Host", back_populates="keys")
     key = relationship("Key", back_populates="hosts")
     __table_args__ = (ForeignKeyConstraint([host_address, host_port],
@@ -75,7 +75,7 @@ class Command(Base):
     stderr = Column(Unicode())
     exception = Column(Unicode())
     guid = Column(String(), default=get_uuid, onupdate=get_uuid)
-    updated = Column(DateTime(timezone=True), onupdate=func.now())
+    updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     host = relationship("Host", back_populates="commands")
     __table_args__ = (ForeignKeyConstraint([host_address, host_port],
                                            [Host.address, Host.port]),
@@ -86,7 +86,7 @@ class CommandiAlias(Base):
     alias = Column(Unicode(), primary_key=True)
     cmd = Column(Unicode())
     enabled = Column(Boolean, default=True)
-    updated = Column(DateTime(timezone=True), onupdate=func.now())
+    updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 #class Address(Base):
 #    __tablename__ = 'address'
