@@ -26,7 +26,7 @@ from sqlalchemy.sql import func, select, case, functions
 from sqlalchemy import create_engine
 from sshame.db import Host, Base, Key, Credential, Command, CommandiAlias
 
-version = "0.6-rc"
+version = "0.6"
 
 try:
     from colorama import Back
