@@ -81,10 +81,11 @@ class Command(Base):
                                            [Host.address, Host.port]),
                       {})
 
-class CommandiAlias(Base):
+class CommandAlias(Base):
     __tablename__ = 'command_aliases'
     alias = Column(Unicode(), primary_key=True)
     cmd = Column(Unicode())
+    pipe_to = Column(Unicode())
     enabled = Column(Boolean, default=True)
     updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

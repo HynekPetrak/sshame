@@ -24,7 +24,7 @@ from collections import OrderedDict, namedtuple
 from sqlalchemy.orm import sessionmaker, scoped_session, Query
 from sqlalchemy.sql import func, select, case, functions
 from sqlalchemy import create_engine
-from sshame.db import Host, Base, Key, Credential, Command, CommandiAlias
+from sshame.db import Host, Base, Key, Credential, Command, CommandAlias
 
 version = "0.7-dev"
 
@@ -356,6 +356,7 @@ class Shell(cmd2.Cmd):
             sqls = ["ALTER TABLE commands ADD COLUMN guid VARCHAR;",
                     "ALTER TABLE hosts ADD COLUMN enabled BOOLEAN;",
                     "ALTER TABLE keys ADD COLUMN enabled BOOLEAN;",
+                    "ALTER TABLE command_aliases ADD COLUMN pipe_to VARCHAR;",
                     ]
             for s in sqls:
                 try:
@@ -591,8 +592,8 @@ class Shell(cmd2.Cmd):
                 async with conn:
                     for cmd in cmds:
                         log.debug(f'[{log_id}] Executing cmd: {cmd}')
-                        cmd_alias = self.db.query(CommandiAlias.cmd).filter(
-                            CommandiAlias.alias == cmd).scalar()
+                        cmd_alias = self.db.query(CommandAlias.cmd).filter(
+                            CommandAlias.alias == cmd).scalar()
                         c = self.db.query(Command).filter(Command.host_address == host_address).filter(Command.host_port == host_port).filter(
                             Command.cmd == cmd).filter(Command.username == username).first()
                         if not c:
@@ -719,11 +720,14 @@ E.g. run_cmd -c "tar -cf - .ssh /etc/passwd /etc/ldap.conf /etc/shadow /home/*/.
     commands_item_group.add_argument(
         '-a', '--add', type=str, nargs=2, help='Add command alias')
     commands_item_group.add_argument(
-        '-l', '--list', action='store_true', help='List command alias')
+        '-l', '--list', action='store_true', help='List command aliasses')
     commands_item_group.add_argument(
         '-r', '--results', action='store_true', help='Show results')
     commands_item_group.add_argument(
         '-s', '--save', type=str, nargs=1, help='Save command output to file')
+    commands_parser.add_argument(
+        '-p', '--pipe-to', type=str, nargs='?', help='Pipe command output to a shell command. CWD for shell 
+        command will be set to ip/user/cmd_alias_name/')
 
     @cmd2.with_argparser(commands_parser)
     @cmd2.with_category(CMD_CAT_SSHAME)
@@ -732,16 +736,18 @@ E.g. run_cmd -c "tar -cf - .ssh /etc/passwd /etc/ldap.conf /etc/shadow /home/*/.
         if arg.add:
             a = arg.add[0]
             c = arg.add[1]
-            ca = self.db.query(CommandiAlias).filter(
-                CommandiAlias.alias == a).first()
+            ca = self.db.query(CommandAlias).filter(
+                CommandAlias.alias == a).first()
             if not ca:
-                ca = CommandiAlias(alias=a)
+                ca = CommandAlias(alias=a)
             ca.cmd = c
+            if arg.pipe_to:
+                ca.pipe_to = arg.pipe_to
             self.db.add(ca)
             self.db.commit()
         if arg.list:
-            q = self.db.query(CommandiAlias.alias, CommandiAlias.cmd).filter(
-                CommandiAlias.enabled)
+            q = self.db.query(CommandAlias.alias, CommandAlias.cmd).filter(
+                CommandAlias.enabled)
             self.print_table(q)
         if arg.results:
             q = self.db.query(Command.guid, Command.host_address, Command.host_port, Command.username, Command.cmd,
