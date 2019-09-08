@@ -26,7 +26,7 @@ from sqlalchemy.sql import func, select, case, functions
 from sqlalchemy import create_engine
 from sshame.db import Host, Base, Key, Credential, Command, CommandiAlias
 
-version = "0.6"
+version = "0.7-dev"
 
 try:
     from colorama import Back
@@ -642,6 +642,7 @@ class Shell(cmd2.Cmd):
         if cmds:
             targets = self.get_command_targets()
             for x in targets:
+                log.debug(f"Adding run_cmd job: {x.username}@{x.host_address}:{x.host_port} run '{truncate(cmd)}' with {len(x.keys)} key(s)")
                 jobs.append(self.run_command_on_single_target(username=x.username,
                     host_address=x.host_address, host_port=x.host_port,
                     keys=x.keys, cmds=cmds))
@@ -652,6 +653,7 @@ class Shell(cmd2.Cmd):
                     keys = self.get_keys_to_test(host, port, username)
                     if not keys:
                         continue
+                    log.debug(f"Adding test_keys job: {username}@{host}:{port} with {len(keys)} key(s)")
                     jobs.append(self.test_keys_on_single_target(host, port,
                        username, keys, cmds))
                 i += 1
