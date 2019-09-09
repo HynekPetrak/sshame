@@ -5,7 +5,7 @@ import datetime
 from sqlalchemy import (Column, ForeignKey, Integer, String,
         DateTime, Index, Unicode, LargeBinary, Boolean, ForeignKeyConstraint)
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, column_property
 from sqlalchemy.sql import func
 from sqlalchemy import create_engine
 
@@ -64,9 +64,6 @@ def get_uuid():
     return str(uuid.uuid4())
 
 class Command(Base):
-    def get_guid(self):
-        return f"{self.username}@{self.host_address}:{self.host_port}#{self.cmd}"
-
     __tablename__ = 'commands'
     #id = Column(Integer, primary_key=True)
     host_address = Column(Integer, primary_key=True)
@@ -80,12 +77,11 @@ class Command(Base):
     pipe_stdout = Column(Unicode())
     pipe_stderr = Column(Unicode())
     exception = Column(Unicode())
-    guid = Column(String(), default=self.get_guid, onupdate=self.get_guid)
+    guid = column_property(username+"@"+host_address+":"+host_port+"#"+cmd)
     updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     host = relationship("Host", back_populates="commands")
     __table_args__ = (ForeignKeyConstraint([host_address, host_port],
-                                           [Host.address, Host.port]),
-                      {})
+                                           [Host.address, Host.port]), {})
 
 class CommandAlias(Base):
     __tablename__ = 'command_aliases'

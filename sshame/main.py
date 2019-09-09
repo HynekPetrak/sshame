@@ -84,8 +84,10 @@ def file_len(fname):
             pass
     return i + 1
 
+
 def truncate(data):
     return (data[:75] + '..') if len(data) > 75 else data
+
 
 def progbar(curr, total, full_progbar=20):
     frac = curr / total
@@ -357,9 +359,9 @@ class Shell(cmd2.Cmd):
                     "ALTER TABLE hosts ADD COLUMN enabled BOOLEAN;",
                     "ALTER TABLE keys ADD COLUMN enabled BOOLEAN;",
                     "ALTER TABLE command_aliases ADD COLUMN pipe_to VARCHAR;",
-                    "ALTER TABLE command_aliases ADD COLUMN pipe_stdout VARCHAR;",
-                    "ALTER TABLE command_aliases ADD COLUMN pipe_stderr VARCHAR;",
-                    "ALTER TABLE command_aliases ADD COLUMN pipe_exit_status INTEGER;",
+                    "ALTER TABLE commands ADD COLUMN pipe_stdout VARCHAR;",
+                    "ALTER TABLE commands ADD COLUMN pipe_stderr VARCHAR;",
+                    "ALTER TABLE commands ADD COLUMN pipe_exit_status INTEGER;",
                     ]
             for s in sqls:
                 try:
@@ -438,22 +440,27 @@ class Shell(cmd2.Cmd):
         """Returns keys that can logon to username@host:port"""
 
         q = (self.db.query(Key.private_key.label("private_key"),
-                 Credential.host_address.label("host_address"),
-                 Credential.host_port.label("host_port"),
-                 Credential.username.label("username"))
+                           Credential.host_address.label("host_address"),
+                           Credential.host_port.label("host_port"),
+                           Credential.username.label("username"))
              .outerjoin(Credential, Key.fingerprint == Credential.key_fingerprint)
              .filter(Credential.valid == True)
-             .order_by(Credential.host_address,
-             Credential.host_port, Credential.username)
              )
         if host:
-            q.filter(Credential.host_address == host)
+            q = q.filter(Credential.host_address == host)
         if port:
-            q.filter(Credential.host_port == port)
+            q = q.filter(Credential.host_port == port)
         if usernames:
-            q.filter(Credential.username.in_(usernames))
+            q = q.filter(Credential.username.in_(usernames))
 
-        Target = namedtuple("Target", ["username", "host_address", "host_port", "keys"])
+        q = q.order_by(Credential.host_address,
+                       Credential.host_port, Credential.username)
+
+        # print(q.statement.compile())
+        # print(q.statement.compile().params)
+
+        Target = namedtuple(
+            "Target", ["username", "host_address", "host_port", "keys"])
 
         ret = []
         for key, group in groupby(q, lambda x: (x.username, x.host_address, x.host_port)):
@@ -540,7 +547,7 @@ class Shell(cmd2.Cmd):
             log.debug(f'[{self.log_id}] [D] key3 {self.key_fingerprint} for {self.username}@{self.host_address}')
             return ret
 
-    async def test_keys_on_single_target(self, host_address, host_port, username='root', keys):
+    async def test_keys_on_single_target(self, host_address, host_port, username, keys):
         log_id = f"{username}@{host_address}:{host_port}"
         async with self.sem:
             _pkssh = self.PublicKeySSHClient(
@@ -589,12 +596,12 @@ class Shell(cmd2.Cmd):
             try:
                 log.debug(f'[*] [{log_id}] Connecting')
                 conn = await asyncio.wait_for(asyncssh.connect(host_address, port=host_port, username=username, known_hosts=None,
-                             client_keys=keys, x509_trusted_certs=None, client_host_keys=None), timeout=self.timeout)
+                                                               client_keys=keys, x509_trusted_certs=None, client_host_keys=None), timeout=self.timeout)
                 log.debug(f'[*] [{log_id}] Connection created')
                 async with conn:
                     for cmd in cmds:
                         log.debug(f'[{log_id}] Executing cmd: {cmd}')
-                        cmd_alias = self.db.query(CommandAlias.cmd,CommandAlias.pipe_to).filter(
+                        cmd_alias = self.db.query(CommandAlias.alias, CommandAlias.cmd, CommandAlias.pipe_to).filter(
                             CommandAlias.alias == cmd).first()
                         c = self.db.query(Command).filter(Command.host_address == host_address).filter(Command.host_port == host_port).filter(
                             Command.cmd == cmd).filter(Command.username == username).first()
@@ -602,6 +609,13 @@ class Shell(cmd2.Cmd):
                             c = Command(
                                 host_address=host_address, host_port=host_port, cmd=cmd, username=username)
                         try:
+                            c.exception = None
+                            c.stdout = None
+                            c.stderr = None
+                            c.exit_status = None
+                            c.pipe_exit_status = None
+                            c.pipe_stdout = None
+                            c.pipe_stderr = None
                             res = await conn.run(cmd_alias.cmd if cmd_alias and cmd_alias.cmd else cmd, check=False)
                             cmds_run += 1
                             # log.debug('done')
@@ -614,35 +628,36 @@ class Shell(cmd2.Cmd):
                                 c.stderr = se
                             else:
                                 if cmd_alias and cmd_alias.pipe_to:
-                                    cwd=os.getcwd()
-                                    #FIXME: escape path?
-                                    cmd_cwd=os.path.join(cwd, f"{host_address}_{host_port}", username, cmd_alias[0])
+                                    cwd = os.getcwd()
+                                    # FIXME: escape path?
+                                    cmd_cwd = os.path.join(cwd, "output", f"{host_address}_{host_port}", username, cmd_alias.alias)
                                     os.makedirs(cmd_cwd, exist_ok=True)
-                                    #TODO: test
+                                    # TODO: test
+                                    log.debug(f'[{log_id}] "{cmd}" running create_subprocess_shell')
                                     proc = await asyncio.create_subprocess_shell(
-                                            cmd_alias.pipe_to,
-                                            cwd=cmd_cwd,
-                                            stdout=asyncio.subprocess.PIPE,
-                                            stdin=asyncio.subprocess.PIPE,
-                                            stderr=asyncio.subprocess.PIPE)
+                                        cmd_alias.pipe_to,
+                                        cwd=cmd_cwd,
+                                        stdout=asyncio.subprocess.PIPE,
+                                        stdin=asyncio.subprocess.PIPE,
+                                        stderr=asyncio.subprocess.PIPE)
 
-                                    pso, pse = await proc.communicate(input=so)
-                                    print(f'[{log_id}] [{cmd!r} exited with {proc.returncode}]')
+                                    log.debug(f'[{log_id}] "{cmd}" running communicate')
+                                    pso, pse = await proc.communicate(input=so.encode())
+                                    log.debug(f'[{log_id}] [{cmd!r} exited with {proc.returncode}]')
                                     c.pipe_exit_status = proc.returncode
                                     if pso:
-                                        print(f'[{log_id}] [pso]\n{pso.decode()}')
+                                        log.debug(f'[{log_id}] [pso] {pso.decode()}')
                                         c.pipe_stdout = pso
                                     if pse:
-                                        print(f'[{log_id}] [pse]\n{pse.decode()}')
+                                        log.debug(f'[{log_id}] [pse] {pse.decode()}')
                                         c.pipe_stderr = pse
                                 else:
                                     c.stdout = so
-                            c.updated = func.current_timestamp()
-                            c.guid = c.get_guid()
                         except Exception as ex:
-                            msg = str(ex)
+                            msg = repr(ex)
                             log.warning(f'[{log_id}] "{cmd}" {msg}')
                             c.exception = msg
+                        c.updated = func.current_timestamp()
                         self.db.add(c)
                         self.db.commit()
                     return cmds_run
@@ -669,20 +684,25 @@ class Shell(cmd2.Cmd):
         if cmds:
             targets = self.get_command_targets()
             for x in targets:
-                log.debug(f"Adding run_cmd job: {x.username}@{x.host_address}:{x.host_port} run '{truncate(cmd)}' with {len(x.keys)} key(s)")
+                log.debug(f"Adding run_cmd job: {x.username}@{x.host_address}:{x.host_port} run '{truncate(str(cmds))}' with {len(x.keys)} key(s)")
                 jobs.append(self.run_command_on_single_target(username=x.username,
-                    host_address=x.host_address, host_port=x.host_port,
-                    keys=x.keys, cmds=cmds))
+                                                              host_address=x.host_address, host_port=x.host_port,
+                                                              keys=x.keys, cmds=cmds))
         else:
             for (host, port) in self.db.query(
                     Host.address, Host.port).filter(Host.enabled == True):
                 for username in usernames:
+                    vc = self.get_command_targets(host, port, [username])
+                    if vc:
+                        log.debug(f"Skipping: {username}@{host}:{port} - already have valid credentials")
+                        # host already has a valid credential
+                        continue
                     keys = self.get_keys_to_test(host, port, username)
                     if not keys:
                         continue
                     log.debug(f"Adding test_keys job: {username}@{host}:{port} with {len(keys)} key(s)")
                     jobs.append(self.test_keys_on_single_target(host, port,
-                       username, keys))
+                                                                username, keys))
                 i += 1
                 progbar(i, hosts_cnt)
         if not jobs:
@@ -737,7 +757,7 @@ E.g. test_keys -u root admin'''
     @cmd2.with_category(CMD_CAT_SSHAME)
     def do_run_cmd(self, arg):
         '''Run command on targets, where we have a valid credentials.
-E.g. run_cmd -c "tar -cf - .ssh /etc/passwd /etc/ldap.conf /etc/shadow /home/*/.ssh /etc/fstab | gzip | uuencode file.tar.gz"'''
+E.g. run_cmd -c "tar -cf - .ssh /etc/passwd /etc/ldap.conf /etc/shadow /home/*/.ssh /etc/fstab | gzip | uuencode /dev/stdout"'''
         asyncio.get_event_loop().run_until_complete(
             self.schedule_jobs(None, arg.command))
 
@@ -752,8 +772,8 @@ E.g. run_cmd -c "tar -cf - .ssh /etc/passwd /etc/ldap.conf /etc/shadow /home/*/.
     commands_item_group.add_argument(
         '-s', '--save', type=str, nargs=1, help='Save command output to file')
     commands_parser.add_argument(
-        '-p', '--pipe-to', type=str, nargs='?', help='Pipe command output to a shell command. CWD for shell 
-        command will be set to ip/user/cmd_alias_name/')
+        '-p', '--pipe-to', type=str, nargs='?', help='''Pipe command output to a shell command. CWD for shell 
+        command will be set to ip/user/cmd_alias_name/''')
 
     @cmd2.with_argparser(commands_parser)
     @cmd2.with_category(CMD_CAT_SSHAME)
@@ -772,13 +792,15 @@ E.g. run_cmd -c "tar -cf - .ssh /etc/passwd /etc/ldap.conf /etc/shadow /home/*/.
             self.db.add(ca)
             self.db.commit()
         if arg.list:
-            q = self.db.query(CommandAlias.alias, CommandAlias.cmd).filter(
+            q = self.db.query(CommandAlias.alias, CommandAlias.cmd, CommandAlias.pipe_to).filter(
                 CommandAlias.enabled)
             self.print_table(q)
         if arg.results:
             q = self.db.query(Command.guid, Command.host_address, Command.host_port, Command.username, Command.cmd,
-                              Command.exit_status, func.coalesce(
-                                  Command.stdout, Command.stderr, Command.exception).label('output'),
+                              Command.exit_status,
+                              ("STDOUT: " + func.substr(Command.stdout, 0, 50) + os.linesep +
+                                  "STDERR: " + func.substr(Command.stderr, 0, 50) + os.linesep +
+                                  "EXC: " + func.substr(Command.exception, 0, 50)).label('output'),
                               Command.updated)
             self.print_table(q)
         if arg.save:
