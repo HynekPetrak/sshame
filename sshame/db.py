@@ -5,7 +5,7 @@ import datetime
 from sqlalchemy import (Column, ForeignKey, Integer, String,
         DateTime, Index, Unicode, LargeBinary, Boolean, ForeignKeyConstraint)
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, column_property
 from sqlalchemy.sql import func
 from sqlalchemy import create_engine
 
@@ -73,18 +73,21 @@ class Command(Base):
     exit_status = Column(Integer)
     stdout = Column(Unicode())
     stderr = Column(Unicode())
+    pipe_exit_status = Column(Integer)
+    pipe_stdout = Column(Unicode())
+    pipe_stderr = Column(Unicode())
     exception = Column(Unicode())
-    guid = Column(String(), default=get_uuid, onupdate=get_uuid)
+    guid = column_property(username+"@"+host_address+":"+host_port+"#"+cmd)
     updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     host = relationship("Host", back_populates="commands")
     __table_args__ = (ForeignKeyConstraint([host_address, host_port],
-                                           [Host.address, Host.port]),
-                      {})
+                                           [Host.address, Host.port]), {})
 
-class CommandiAlias(Base):
+class CommandAlias(Base):
     __tablename__ = 'command_aliases'
     alias = Column(Unicode(), primary_key=True)
     cmd = Column(Unicode())
+    pipe_to = Column(Unicode())
     enabled = Column(Boolean, default=True)
     updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
