@@ -357,6 +357,9 @@ class Shell(cmd2.Cmd):
                     "ALTER TABLE hosts ADD COLUMN enabled BOOLEAN;",
                     "ALTER TABLE keys ADD COLUMN enabled BOOLEAN;",
                     "ALTER TABLE command_aliases ADD COLUMN pipe_to VARCHAR;",
+                    "ALTER TABLE command_aliases ADD COLUMN pipe_stdout VARCHAR;",
+                    "ALTER TABLE command_aliases ADD COLUMN pipe_stderr VARCHAR;",
+                    "ALTER TABLE command_aliases ADD COLUMN pipe_exit_status INTEGER;",
                     ]
             for s in sqls:
                 try:
@@ -481,7 +484,6 @@ class Shell(cmd2.Cmd):
         def __init__(self, db, keys, host_address, host_port, username):
             self.log_id = f"{username}@{host_address}:{host_port}"
             self._keylist = keys
-            self.consumed = 0
             self.keys_to_test = len(keys)
             self.key_fingerprint = None
             self.db = db
@@ -538,7 +540,7 @@ class Shell(cmd2.Cmd):
             log.debug(f'[{self.log_id}] [D] key3 {self.key_fingerprint} for {self.username}@{self.host_address}')
             return ret
 
-    async def test_keys_on_single_target(self, host_address, host_port, username='root', keys=None, cmds=None):
+    async def test_keys_on_single_target(self, host_address, host_port, username='root', keys):
         log_id = f"{username}@{host_address}:{host_port}"
         async with self.sem:
             _pkssh = self.PublicKeySSHClient(
@@ -592,15 +594,15 @@ class Shell(cmd2.Cmd):
                 async with conn:
                     for cmd in cmds:
                         log.debug(f'[{log_id}] Executing cmd: {cmd}')
-                        cmd_alias = self.db.query(CommandAlias.cmd).filter(
-                            CommandAlias.alias == cmd).scalar()
+                        cmd_alias = self.db.query(CommandAlias.cmd,CommandAlias.pipe_to).filter(
+                            CommandAlias.alias == cmd).first()
                         c = self.db.query(Command).filter(Command.host_address == host_address).filter(Command.host_port == host_port).filter(
                             Command.cmd == cmd).filter(Command.username == username).first()
                         if not c:
                             c = Command(
                                 host_address=host_address, host_port=host_port, cmd=cmd, username=username)
                         try:
-                            res = await conn.run(cmd_alias if cmd_alias else cmd, check=False)
+                            res = await conn.run(cmd_alias.cmd if cmd_alias and cmd_alias.cmd else cmd, check=False)
                             cmds_run += 1
                             # log.debug('done')
                             so = res.stdout
@@ -611,8 +613,32 @@ class Shell(cmd2.Cmd):
                             if es != 0:
                                 c.stderr = se
                             else:
-                                c.stdout = so
+                                if cmd_alias and cmd_alias.pipe_to:
+                                    cwd=os.getcwd()
+                                    #FIXME: escape path?
+                                    cmd_cwd=os.path.join(cwd, f"{host_address}_{host_port}", username, cmd_alias[0])
+                                    os.makedirs(cmd_cwd, exist_ok=True)
+                                    #TODO: test
+                                    proc = await asyncio.create_subprocess_shell(
+                                            cmd_alias.pipe_to,
+                                            cwd=cmd_cwd,
+                                            stdout=asyncio.subprocess.PIPE,
+                                            stdin=asyncio.subprocess.PIPE,
+                                            stderr=asyncio.subprocess.PIPE)
+
+                                    pso, pse = await proc.communicate(input=so)
+                                    print(f'[{log_id}] [{cmd!r} exited with {proc.returncode}]')
+                                    c.pipe_exit_status = proc.returncode
+                                    if pso:
+                                        print(f'[{log_id}] [pso]\n{pso.decode()}')
+                                        c.pipe_stdout = pso
+                                    if pse:
+                                        print(f'[{log_id}] [pse]\n{pse.decode()}')
+                                        c.pipe_stderr = pse
+                                else:
+                                    c.stdout = so
                             c.updated = func.current_timestamp()
+                            c.guid = c.get_guid()
                         except Exception as ex:
                             msg = str(ex)
                             log.warning(f'[{log_id}] "{cmd}" {msg}')
@@ -656,7 +682,7 @@ class Shell(cmd2.Cmd):
                         continue
                     log.debug(f"Adding test_keys job: {username}@{host}:{port} with {len(keys)} key(s)")
                     jobs.append(self.test_keys_on_single_target(host, port,
-                       username, keys, cmds))
+                       username, keys))
                 i += 1
                 progbar(i, hosts_cnt)
         if not jobs:

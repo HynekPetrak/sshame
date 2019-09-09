@@ -64,6 +64,9 @@ def get_uuid():
     return str(uuid.uuid4())
 
 class Command(Base):
+    def get_guid(self):
+        return f"{self.username}@{self.host_address}:{self.host_port}#{self.cmd}"
+
     __tablename__ = 'commands'
     #id = Column(Integer, primary_key=True)
     host_address = Column(Integer, primary_key=True)
@@ -73,8 +76,11 @@ class Command(Base):
     exit_status = Column(Integer)
     stdout = Column(Unicode())
     stderr = Column(Unicode())
+    pipe_exit_status = Column(Integer)
+    pipe_stdout = Column(Unicode())
+    pipe_stderr = Column(Unicode())
     exception = Column(Unicode())
-    guid = Column(String(), default=get_uuid, onupdate=get_uuid)
+    guid = Column(String(), default=self.get_guid, onupdate=self.get_guid)
     updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     host = relationship("Host", back_populates="commands")
     __table_args__ = (ForeignKeyConstraint([host_address, host_port],
