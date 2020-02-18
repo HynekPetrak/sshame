@@ -23,7 +23,7 @@ In case you want to contribute instead of install run:
 
 `pip3` will install the latest release.
 
-    pip3 install shame
+    pip3 install sshame
 
 ## Basic usage ##
 
