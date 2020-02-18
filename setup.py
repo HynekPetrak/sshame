@@ -2,7 +2,7 @@
 
 PROJECT = 'sshame'
 
-VERSION = '0.9'
+VERSION = '0.10'
 
 from setuptools import setup, find_packages
 

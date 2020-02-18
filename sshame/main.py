@@ -26,7 +26,7 @@ from sqlalchemy.sql import func, select, case, functions
 from sqlalchemy import create_engine
 from sshame.db import Host, Base, Key, Credential, Command, CommandAlias
 
-version = "0.9"
+version = "0.10"
 
 try:
     from colorama import Back
@@ -172,9 +172,9 @@ class Shell(cmd2.Cmd):
                 for l in f:
                     try:
                         ls = l.strip()
-                        ip = socket.gethostbyname(ls)
+                        #ip = socket.gethostbyname(ls)
                         # log.info(f"{ls} > {ip}")
-                        hosts.add(ip)
+                        hosts.add(ls)
                     except Exception as ex:
                         # log.info(f"{ls} > ")
                         # log.error(ex)
