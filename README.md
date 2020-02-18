@@ -9,7 +9,7 @@ Interactive tool to brute force ssh public key authentication. Primarily intende
 Clone the source from Github:
 
     git clone https://github.com/HynekPetrak/sshame.git
-    cd shame
+    cd sshame
 
 Then in order to install run:
 
