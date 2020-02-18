@@ -2,7 +2,7 @@
 
 PROJECT = 'sshame'
 
-VERSION = '0.7'
+VERSION = '0.8'
 
 from setuptools import setup, find_packages
 
@@ -41,7 +41,7 @@ setup(
     provides=[],
     install_requires=[
         'asyncssh >= 1.15.1',
-        'cmd2 >= 0.9.15',
+        'cmd2 >= 0.10.0',
         'colorama',
         'sqlalchemy',
         'scapy',

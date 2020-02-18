@@ -109,7 +109,7 @@ class Shell(cmd2.Cmd):
         log.info(f"Starting ==== shame {version} ====")
         histfile = os.path.expanduser('~/.sshame_history')
         super().__init__(persistent_history_file=histfile)
-        self.settable.update({'timeout': 'Network timeout in seconds'})
+        self.settables.update({'timeout': 'Network timeout in seconds'})
         self.init_db()
         log.info(f"Network timeout: {self.timeout}s")
 
@@ -501,6 +501,9 @@ class Shell(cmd2.Cmd):
         def keys_consumed(self):
             return self.keys_to_test - len(self._keylist)
 
+        def keys_left(self):
+            return len(self._keylist)
+
         def connection_made(self, conn):
             self.host = conn.get_extra_info('peername')[0]
             log.debug(f'[+] [{self.log_id}] Connection made.')
@@ -572,17 +575,20 @@ class Shell(cmd2.Cmd):
                     return valid_creds
                 except Exception as ex:
                     msg = str(ex)
-                    ignore = ['Permission denied', 'Too many authentication', 'Connection reset by peer',
-                              'The maximum number of authentication attempts']
+                    if not _pkssh.keys_left():
+                        log.debug(f'[{log_id}] All {_pkssh.keys_to_test} keys tested.')
+                        return valid_creds  # Exception("No more keys")
                     if (_pkssh.keys_consumed() == keys_consumed):
                         log.info(f'[{log_id}] No keys consumed, but: {msg}')
                         return valid_creds
                     keys_consumed = _pkssh.keys_consumed()
+                    ignore = ['Permission denied', 'Too many authentication', 'Connection reset by peer',
+                              'The maximum number of authentication attempts']
                     if not any(x in msg for x in ignore):
                         log.warning(f'[{log_id}] {msg}')
                         return valid_creds
                     if not _pkssh.key_fingerprint:
-                        log.debug(f'[{log_id}] No more keys')
+                        log.debug(f'[{log_id}] All {_pkssh.keys_to_test} keys tested..')
                         return valid_creds  # Exception("No more keys")
                 finally:
                     if conn:
