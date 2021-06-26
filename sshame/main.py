@@ -428,7 +428,7 @@ class Shell(cmd2.Cmd):
         Ordered by number of host, that a key can logon to."""
 
         vk = self.get_valued_keys().subquery()
-        tk = self.get_tested_keys(host, port, username).subquery()
+        tk = self.get_tested_keys(host, port, username) #.subquery()
 
         q = (self.db.query(vk.c.fingerprint, vk.c.private_key)
              .filter(vk.c.fingerprint.notin_(tk))
@@ -505,8 +505,7 @@ class Shell(cmd2.Cmd):
             return len(self._keylist)
 
         def connection_made(self, conn):
-            self.host = conn.get_extra_info('peername')[0]
-            log.debug(f'[+] [{self.log_id}] Connection made.')
+            log.debug(f'[+] [{self.log_id}] Connection made')
 
         def connection_lost(self, exc):
             log.debug(f'[-] [{self.log_id}] connection_lost: {str(exc)}')
@@ -532,11 +531,15 @@ class Shell(cmd2.Cmd):
             self.db.commit()
             self.key_fingerprint = None
 
+        def password_auth_requested(self):
+            log.debug(f'[*] [{self.log_id}] Password authentication requested')
+            return None
+
         def public_key_auth_requested(self):
             if self.key_fingerprint:
                 cred = self.db.query(Credential).filter(Credential.host_address == self.host_address).filter(Credential.host_port == self.host_port).filter(
                     Credential.key_fingerprint == self.key_fingerprint).filter(Credential.username == self.username).first()
-                log.debug(str(cred))
+                #log.debug(f'[{self.log_id] [D] Cred: str(cred)')
                 if not cred:
                     cred = Credential(host_address=self.host_address, host_port=self.host_port,
                                       key_fingerprint=self.key_fingerprint, username=self.username)
@@ -579,7 +582,7 @@ class Shell(cmd2.Cmd):
                         log.debug(f'[{log_id}] All {_pkssh.keys_to_test} keys tested.')
                         return valid_creds  # Exception("No more keys")
                     if (_pkssh.keys_consumed() == keys_consumed):
-                        log.info(f'[{log_id}] No keys consumed, but: {msg}')
+                        log.debug(f'[{log_id}] No keys consumed, but: {msg}')
                         return valid_creds
                     keys_consumed = _pkssh.keys_consumed()
                     ignore = ['Permission denied', 'Too many authentication', 'Connection reset by peer',
