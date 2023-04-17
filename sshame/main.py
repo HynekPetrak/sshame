@@ -16,9 +16,11 @@ import hashlib
 import base64
 import asyncio
 import asyncssh
-from itertools import groupby
+from itertools import groupby, product
+from netaddr import IPSet
 from glob import glob
 from scapy.all import sr, IP, TCP, conf as scapy_conf, L3RawSocket
+from scapy.base_classes import Net
 from tabulate import tabulate
 from collections import OrderedDict, namedtuple
 from sqlalchemy.orm import sessionmaker, scoped_session, Query
@@ -26,7 +28,7 @@ from sqlalchemy.sql import func, select, case, functions
 from sqlalchemy import create_engine
 from sshame.db import Host, Base, Key, Credential, Command, CommandAlias
 
-version = "0.11"
+version = "0.12-beta"
 
 try:
     from colorama import Back
@@ -116,6 +118,8 @@ class Shell(cmd2.Cmd):
     hosts_parser = cmd2.Cmd2ArgumentParser()
     hosts_parser.add_argument(
         '-v', '--verbose', action='store_true', help='Show session info')
+    hosts_parser.add_argument(
+        '-s', '--scan', action='store_true', help='Scan open ports while adding hosts, adds open only')
     hosts_item_group = hosts_parser.add_mutually_exclusive_group()
     hosts_item_group.add_argument(
         '-a', '--add', type=str, nargs='+', help='Add hosts')
@@ -137,28 +141,35 @@ class Shell(cmd2.Cmd):
 
         def add_hosts(hosts, ports=None):
             ports = [22] if not ports else ports
-            self.poutput(
-                f"Scanning {','.join(hosts)} on port(s) {','.join([str(p) for p in ports])}")
-            # https://scapy.readthedocs.io/en/latest/troubleshooting.html#i-can-t-ping-127-0-0-1-scapy-does-not-work-with-127-0-0-1-or-on-the-loopback-interface
-            scapy_conf.L3socket = L3RawSocket
-            res, unans = sr(IP(dst=hosts)  # ["10.203.216.142", "10.222.5.20", "10.222.143.52"])
-                            / TCP(flags="S", dport=ports), retry=1, timeout=10)
+            hosts_ports = []
+            if arg.scan:
+                self.poutput(
+                    f"Scanning {','.join(hosts)} on port(s) {','.join([str(p) for p in ports])}")
+                # https://scapy.readthedocs.io/en/latest/troubleshooting.html#i-can-t-ping-127-0-0-1-scapy-does-not-work-with-127-0-0-1-or-on-the-loopback-interface
+                scapy_conf.L3socket = L3RawSocket
+                res, unans = sr(IP(dst=hosts)  # ["10.203.216.142", "10.222.5.20", "10.222.143.52"])
+                                / TCP(flags="S", dport=ports), retry=1, timeout=10)
 
-            for s, r in res:
-                if r.haslayer(TCP) and (r.getlayer(TCP).flags & 2):
-                    # if s[TCP].dport == r[TCP].sport:
-                    #   print("%d is unfiltered" % s[TCP].dport)
-                    h = s[IP].dst
-                    p = s[TCP].dport
-                    host = self.db.query(Host).filter(
-                        Host.address == h).filter(Host.port == p).first()
-                    if not host:
-                        host = Host(address=s[IP].dst, port=s[TCP].dport)
-                        log.info(f"Adding host (port open): {s[IP].dst} {s[TCP].dport}")
-                    else:
-                        host.updated = func.now()
-                    host.enabled = True
-                    self.db.add(host)
+                for s, r in res:
+                    if r.haslayer(TCP) and (r.getlayer(TCP).flags & 2):
+                        # if s[TCP].dport == r[TCP].sport:
+                        #   print("%d is unfiltered" % s[TCP].dport)
+                        h = s[IP].dst
+                        p = s[TCP].dport
+                        hosts_ports.add((h, p))
+            else:
+                hosts_ports = product([str(x) for x in IPSet(hosts)], ports)
+
+            for h, p in hosts_ports:
+                host = self.db.query(Host).filter(
+                    Host.address == h).filter(Host.port == p).first()
+                if not host:
+                    host = Host(address=h, port=p)
+                    log.info(f"Adding host: {h}:{p}")
+                else:
+                    host.updated = func.now()
+                host.enabled = True
+                self.db.add(host)
             self.db.commit()
 
         if arg.add:
@@ -280,7 +291,7 @@ class Shell(cmd2.Cmd):
         if arg.list:
             q = self.db.query(Key.fingerprint, Key.source,
                               Key.key_type, Key.created, func.sum(
-                                  case([(Credential.valid == True, 1)], else_=0)).label('servers')
+                                  case((Credential.valid == True, 1), else_=0)).label('servers')
                               ).outerjoin(Credential, Key.fingerprint == Credential.key_fingerprint).group_by(Key.fingerprint).order_by(Key.created)
             self.print_table(q)
 
@@ -303,7 +314,7 @@ class Shell(cmd2.Cmd):
         'Display credentials'
         if arg.list:
             q = self.db.query(Credential.username, Credential.valid, Credential.host_address, Credential.host_port, Credential.key_fingerprint,
-                              Key.source, Credential.updated, Host.dn).join('host').join('key').order_by(Credential.host_address)
+                              Key.source, Credential.updated, Host.dn).join(Host).join(Key).order_by(Credential.host_address)
             if not arg.verbose:
                 q = q.filter(Credential.valid == True)
             else:
@@ -418,7 +429,7 @@ class Shell(cmd2.Cmd):
         if not k:
             self.poutput("No entries found")
             return
-        cols = k.keys()
+        cols = query.statement.columns.keys()
         rows = query.all()
         msg = f"Entries: {len(rows)}{os.linesep * 2}"
         self.ppaged(msg + tabulate(rows, cols, tablefmt='orgtbl'))
@@ -472,7 +483,7 @@ class Shell(cmd2.Cmd):
     def get_valued_keys(self):
         return (self.db.query(Key.fingerprint.label('fingerprint'),
                               Key.private_key,
-                              func.sum(case([(Credential.valid == True, 1)],
+                              func.sum(case((Credential.valid == True, 1),
                                             else_=0)).label('value'))
                 .outerjoin(Credential, Key.fingerprint == Credential.key_fingerprint)
                 .group_by(Key.fingerprint))
