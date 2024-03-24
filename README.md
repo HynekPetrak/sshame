@@ -13,11 +13,11 @@ Clone the source from Github:
 
 Then in order to install run:
 
-    sudo python3 setup.py install
+    python -m pip install .
 
 In case you want to contribute instead of install run:
 
-    sudo python3 setup.py develop
+    python -m pip install --editable .
 
 ### Installaling via PyPI ###
 
