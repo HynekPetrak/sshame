@@ -12,6 +12,7 @@ dependencies = [
 	'scapy',
 	'tabulate',
 	'pyyaml',
+ 	'netaddr',
 ]
 [project.scripts]
 sshame = "sshame.main:main"
