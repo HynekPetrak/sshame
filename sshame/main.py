@@ -786,6 +786,8 @@ E.g. run_cmd -c "tar -cf - .ssh /etc/passwd /etc/ldap.conf /etc/shadow /home/*/.
     commands_item_group.add_argument(
         '-a', '--add', type=str, nargs=2, help='Add command alias')
     commands_item_group.add_argument(
+        '-d', '--delete', type=str, nargs="+", help='Delete command alias')
+    commands_item_group.add_argument(
         '-l', '--list', action='store_true', help='List command aliasses')
     commands_item_group.add_argument(
         '-r', '--results', action='store_true', help='Show results')
@@ -811,6 +813,16 @@ E.g. run_cmd -c "tar -cf - .ssh /etc/passwd /etc/ldap.conf /etc/shadow /home/*/.
                 ca.pipe_to = arg.pipe_to
             self.db.add(ca)
             self.db.commit()
+        if arg.delete:
+            for alias_name in arg.delete:
+                alias = self.db.query(CommandAlias).filter(CommandAlias.alias==alias_name).first()
+                if alias:
+                    self.db.delete(alias)
+                    self.db.commit()
+                    log.info(f"Deleted Command Alias: {alias_name}")
+                else:
+                    log.info(f"No Command Alias found with name: {alias_name}")
+
         if arg.list:
             q = self.db.query(CommandAlias.alias, CommandAlias.cmd, CommandAlias.pipe_to).filter(
                 CommandAlias.enabled)
