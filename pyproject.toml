@@ -3,7 +3,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 [project]
 name = "sshame"
-version = "0.12.beta"
+version = "0.13.alpha"
 dependencies = [
 	'asyncssh >= 1.15.1',
 	'cmd2 >= 0.10.0',
