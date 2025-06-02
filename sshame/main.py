@@ -25,10 +25,10 @@ from tabulate import tabulate
 from collections import OrderedDict, namedtuple
 from sqlalchemy.orm import sessionmaker, scoped_session, Query
 from sqlalchemy.sql import func, select, case, functions
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sshame.db import Host, Base, Key, Credential, Command, CommandAlias
 
-version = "0.12-beta"
+version = "0.13-alpha"
 
 try:
     from colorama import Back
@@ -377,7 +377,7 @@ class Shell(cmd2.Cmd):
             for s in sqls:
                 try:
                     log.debug(f"Running {s}")
-                    self.db.execute(s)
+                    self.db.execute(text(s))
                     self.db.commit()
                 except Exception as ex:
                     log.debug(f"Failed: {ex}")
